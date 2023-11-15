@@ -51,15 +51,41 @@ class IosPlatformFileEditor extends AbstractPlatformFileEditor {
   @override
   Future<String?> getBundleId() async {
     final filePath = iosProjectPbxprojPath;
-    var contentLineByLine = await readFileAsLineByline(
-      filePath: filePath,
-    );
-    for (var i = 0; i < contentLineByLine.length; i++) {
-      if (contentLineByLine[i]?.contains('PRODUCT_BUNDLE_IDENTIFIER') ??
-          false) {
-        return (contentLineByLine[i] as String).split('=').last.trim();
+    var contentLineByLine = await readFileAsLineByline(filePath: filePath);
+    var isInBuildSettings = false;
+    var isInCorrectBuildSettings = false;
+
+    String? bundleId;
+    for (var line in contentLineByLine) {
+      if (line == null) continue;
+
+      if (!isInBuildSettings && line.contains('buildSettings = {')) {
+        isInCorrectBuildSettings = false;
+        isInBuildSettings = true;
+        bundleId = null;
+        continue;
+      }
+
+      if (!isInBuildSettings) continue;
+
+      if (line.contains('INFOPLIST_FILE = Runner/Info.plist')) {
+        isInCorrectBuildSettings = true;
+        continue;
+      }
+
+      if (line.contains('PRODUCT_BUNDLE_IDENTIFIER')) {
+        bundleId = line.split('=').last.trim().replaceAll(';', '').trim();
+        continue;
+      }
+
+      if (line.contains('};')) {
+        if (isInCorrectBuildSettings && bundleId != null) return bundleId;
+        bundleId = null;
+        isInCorrectBuildSettings = false;
+        isInBuildSettings = false;
       }
     }
+
     return null;
   }
 
@@ -106,18 +132,27 @@ class IosPlatformFileEditor extends AbstractPlatformFileEditor {
   @override
   Future<String?> setBundleId({required String bundleId}) async {
     final filePath = iosProjectPbxprojPath;
-    List? contentLineByLine = await readFileAsLineByline(
+    var contentLineByLine = await readFileAsLineByline(
       filePath: filePath,
     );
-    for (var i = 0; i < contentLineByLine.length; i++) {
-      if (contentLineByLine[i].contains('PRODUCT_BUNDLE_IDENTIFIER')) {
-        contentLineByLine[i] = '				PRODUCT_BUNDLE_IDENTIFIER = $bundleId;';
-      }
-    }
+
+    final mainBundleId = await getBundleId();
+    if (mainBundleId == null) return null;
+
+    final newContentLineByLine = contentLineByLine.map(
+        (line) {
+          if (line == null) return line;
+          if (line.contains('PRODUCT_BUNDLE_IDENTIFIER')) {
+            line = line.replaceAll(mainBundleId, bundleId);
+          }
+          return line;
+        }
+    ).toList();
+
     final message = await super.setBundleId(bundleId: bundleId);
     var writtenFile = await writeFile(
       filePath: filePath,
-      content: contentLineByLine.join('\n'),
+      content: newContentLineByLine.join('\n'),
     );
     return message;
   }
